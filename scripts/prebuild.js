@@ -20,17 +20,20 @@ const hasAnalysis = a => !!(a && a.holdings && a.holdings.length && a.portfolio)
 const isQuota = e => /\b429\b|quota|resource_exhausted|rate.limit/i.test(String(e));
 (async () => {
   const prev = read(stateFile) || {}, cursor = (+prev.cursor || 0) % codes.length;
-  // Retry transient failures before scanning new funds. Migrate failures from the old
+  // Split the bounded allowance between rotating retries and new funds. Migrate failures from the old
   // state format once, excluding quota stops (the cursor already resumes those).
   // The queue is persisted independently of the current run's failure report.
   const pending = [...new Set((prev.failedFunds || (prev.failures || []).filter(f => !isQuota(f.error)).map(f => f.code))
     .map(String).filter(c => codes.includes(c)))];
   let writes = 0, attempts = 0, checked = 0, failures = [], quota = false, lastCall = 0, cursorAdvance = 0;
-  const retryCodes = pending.slice(0, SCAN_COUNT);
-  const queueFailure = c => { if (!pending.includes(c)) pending.push(c); };
+  // Requeue failures at the tail so one busy fund cannot monopolize later runs.
+  const queueFailure = c => { const i = pending.indexOf(c); if (i >= 0) pending.splice(i, 1); pending.push(c); };
   const clearFailure = c => { const i = pending.indexOf(c); if (i >= 0) pending.splice(i, 1); };
   const today = new Date().toISOString().slice(0,10);
   const used = prev.day === today ? (+prev.dayAttempts || 0) : 0;
+  // At the normal eight-call cap: up to four retries, then four new funds.
+  // No-change retries use no calls, leaving their unused allowance for new funds.
+  const retryCodes = pending.slice(0, Math.min(SCAN_COUNT, Math.floor(Math.max(0, DAILY_CALLS - used) / 2)));
   for (let i = 0; i < SCAN_COUNT; i++) {
     if (Date.now() - started > MAX_RUN_MS - 120000) break;
     const retry = i < retryCodes.length;
@@ -52,7 +55,7 @@ const isQuota = e => /\b429\b|quota|resource_exhausted|rate.limit/i.test(String(
       const a = await buildAnalysis(fund);
       if (!hasAnalysis(a)) {
         const err = String(a.error || 'incomplete analysis'); failures.push({ code:c, error:err.slice(0, 180) });
-        if (isQuota(err)) { quota = true; break; }
+        if (isQuota(err)) { if (retry) queueFailure(c); quota = true; break; }
         queueFailure(c); checked++; if (!retry) cursorAdvance++; continue;
       }
       // Successful research only: no partial overwrite and no baseline advance on failure.
@@ -63,7 +66,7 @@ const isQuota = e => /\b429\b|quota|resource_exhausted|rate.limit/i.test(String(
       console.log(c, 'published', a.holdings.length, 'positions');
     } catch (e) {
       const err = String(e.message || e); failures.push({ code:c, error:err.slice(0,180) });
-      if (isQuota(err)) { quota = true; break; }
+      if (isQuota(err)) { if (retry) queueFailure(c); quota = true; break; }
       queueFailure(c); checked++; if (!retry) cursorAdvance++;
     }
   }
