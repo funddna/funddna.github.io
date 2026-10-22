@@ -1,1 +1,1 @@
-{"cursor":71,"scanned":8,"attempts":8,"day":"2026-10-21","dayAttempts":8,"published":7,"quotaStopped":false,"total":320,"completed":68,"failedFunds":["119556","119589","150915"],"lastRun":"2026-10-21T14:18:35.664Z","failures":[{"code":"150915","error":"incomplete analysis"}]}
+{"cursor":76,"scanned":8,"attempts":8,"day":"2026-10-22","dayAttempts":8,"published":8,"quotaStopped":false,"total":320,"completed":76,"failedFunds":[],"lastRun":"2026-10-22T14:17:57.684Z","failures":[]}
